@@ -120,13 +120,13 @@
       </div>
       <div class="rules">
         - 15x15 판 기준이에요.<br/>
-        - 흑부터 시작합니다.<br/>
+        - 흑(사람)부터 시작하고, 백은 자동으로 둬요.<br/>
         - 가로 / 세로 / 대각선 중 5개 연속이면 승리예요.<br/>
         <div class="stone-preview">
-          <span class="stone black"></span> 흑<br/>
+          <span class="stone black"></span> 흑 = 사람<br/>
         </div>
         <div class="stone-preview">
-          <span class="stone white"></span> 백
+          <span class="stone white"></span> 백 = 자동 상대
         </div>
       </div>
     </aside>
@@ -144,6 +144,7 @@
     let currentPlayer = 1;
     let winner = 0;
     let history = [];
+    let isThinking = false;
 
     function drawBoard() {
       const w = canvas.width;
@@ -217,9 +218,11 @@
 
     function updateStatus() {
       if (winner) {
-        statusText.innerHTML = `<span class="turn">${winner === 1 ? '흑' : '백'}</span> 승리!`; 
+        statusText.innerHTML = `<span class="turn">${winner === 1 ? '흑(사람)' : '백(AI)'}</span> 승리!`;
+      } else if (isThinking) {
+        statusText.innerHTML = `현재 차례: <span class="turn">백(AI)</span><br/>생각 중...`;
       } else {
-        statusText.innerHTML = `현재 차례: <span class="turn">${currentPlayer === 1 ? '흑' : '백'}</span><br/>수: ${history.length}`;
+        statusText.innerHTML = `현재 차례: <span class="turn">${currentPlayer === 1 ? '흑(사람)' : '백(AI)'}</span><br/>수: ${history.length}`;
       }
     }
 
@@ -261,7 +264,7 @@
     }
 
     function placeStone(x, y) {
-      if (winner || board[y][x] !== 0) return;
+      if (winner || board[y][x] !== 0) return false;
       board[y][x] = currentPlayer;
       history.push({ x, y, player: currentPlayer });
       if (checkWin(x, y, currentPlayer)) {
@@ -271,12 +274,89 @@
       }
       drawBoard();
       updateStatus();
+      return true;
+    }
+
+    function aiMove() {
+      if (winner || currentPlayer !== 2) return;
+      isThinking = true;
+      updateStatus();
+      setTimeout(() => {
+        const move = pickBestMove();
+        isThinking = false;
+        if (move) placeStone(move.x, move.y);
+        updateStatus();
+      }, 250);
+    }
+
+    function pickBestMove() {
+      const candidates = [];
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (board[y][x] !== 0) continue;
+          if (!hasNeighbor(x, y) && history.length) continue;
+          const attack = evaluatePoint(x, y, 2);
+          const defend = evaluatePoint(x, y, 1);
+          const centerBias = 14 - (Math.abs(7 - x) + Math.abs(7 - y));
+          const score = Math.max(attack * 1.15, defend * 1.05) + centerBias;
+          candidates.push({ x, y, score, attack, defend });
+        }
+      }
+      if (!candidates.length) return { x: 7, y: 7 };
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates[0];
+    }
+
+    function hasNeighbor(x, y) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE && board[ny][nx] !== 0) return true;
+        }
+      }
+      return false;
+    }
+
+    function evaluatePoint(x, y, player) {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      let best = 0;
+      for (const [dx, dy] of dirs) {
+        const a = scanLine(x, y, dx, dy, player);
+        const b = scanLine(x, y, -dx, -dy, player);
+        const count = a.count + b.count + 1;
+        const openEnds = a.open + b.open;
+        let score = count * count * 12 + openEnds * 5;
+        if (count >= 5) score += 100000;
+        else if (count === 4 && openEnds >= 1) score += 12000;
+        else if (count === 3 && openEnds >= 2) score += 3000;
+        else if (count === 2 && openEnds >= 2) score += 500;
+        best = Math.max(best, score);
+      }
+      return best;
+    }
+
+    function scanLine(x, y, dx, dy, player) {
+      let count = 0;
+      let nx = x + dx;
+      let ny = y + dy;
+      while (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE && board[ny][nx] === player) {
+        count++;
+        nx += dx;
+        ny += dy;
+      }
+      let open = 0;
+      if (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE && board[ny][nx] === 0) open = 1;
+      return { count, open };
     }
 
     canvas.addEventListener('click', (evt) => {
+      if (currentPlayer !== 1 || isThinking) return;
       const pos = getBoardPos(evt);
       if (!pos) return;
-      placeStone(pos.x, pos.y);
+      const placed = placeStone(pos.x, pos.y);
+      if (placed && !winner && currentPlayer === 2) aiMove();
     });
 
     restartBtn.addEventListener('click', () => {
@@ -284,25 +364,25 @@
       currentPlayer = 1;
       winner = 0;
       history = [];
+      isThinking = false;
       drawBoard();
       updateStatus();
     });
 
     undoBtn.addEventListener('click', () => {
-      if (!history.length || winner) {
-        if (winner && history.length) {
-          const last = history.pop();
-          board[last.y][last.x] = 0;
-          winner = 0;
-          currentPlayer = last.player;
-        } else {
-          return;
-        }
-      } else {
-        const last = history.pop();
-        board[last.y][last.x] = 0;
-        currentPlayer = last.player;
+      if (!history.length) return;
+      if (isThinking) return;
+      winner = 0;
+
+      const last = history.pop();
+      board[last.y][last.x] = 0;
+
+      if (last.player === 2 && history.length) {
+        const prev = history.pop();
+        board[prev.y][prev.x] = 0;
       }
+
+      currentPlayer = 1;
       drawBoard();
       updateStatus();
     });
