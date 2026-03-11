@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>루비 오목</title>
+  <style>
+    :root {
+      --bg: #f5efe3;
+      --board: #d8a45c;
+      --line: rgba(60, 35, 10, 0.75);
+      --panel: #fffaf0;
+      --text: #2f2418;
+      --muted: #7a6651;
+      --accent: #7c5cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #fbf7ef 0%, #efe5d0 100%);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .app {
+      width: min(100%, 980px);
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 20px;
+      align-items: start;
+    }
+    .board-wrap, .panel {
+      background: var(--panel);
+      border-radius: 20px;
+      box-shadow: 0 12px 30px rgba(60, 35, 10, 0.12);
+      padding: 18px;
+    }
+    .board-wrap h1 { margin: 0 0 8px; font-size: 28px; }
+    .board-wrap p { margin: 0 0 14px; color: var(--muted); }
+    canvas {
+      width: 100%;
+      max-width: 640px;
+      aspect-ratio: 1;
+      display: block;
+      background: var(--board);
+      border-radius: 12px;
+      touch-action: none;
+      margin: 0 auto;
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 18px; }
+    .status {
+      font-size: 15px;
+      line-height: 1.5;
+      margin-bottom: 14px;
+    }
+    .turn {
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .buttons {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      background: #2f2418;
+      color: white;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #e9deca;
+      color: var(--text);
+    }
+    .rules {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .stone-preview {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .stone {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .black { background: #111; }
+    .white { background: #fff; }
+    @media (max-width: 820px) {
+      .app { grid-template-columns: 1fr; }
+      .panel { order: -1; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="board-wrap">
+      <h1>루비 오목</h1>
+      <p>브라우저에서 바로 되는 2인용 오목이야.</p>
+      <canvas id="board" width="640" height="640" aria-label="오목판"></canvas>
+    </section>
+    <aside class="panel">
+      <h2>게임 정보</h2>
+      <div class="status" id="statusText"></div>
+      <div class="buttons">
+        <button id="restartBtn">새 게임</button>
+        <button id="undoBtn" class="secondary">한 수 무르기</button>
+      </div>
+      <div class="rules">
+        - 15x15 판 기준이에요.<br/>
+        - 흑부터 시작합니다.<br/>
+        - 가로 / 세로 / 대각선 중 5개 연속이면 승리예요.<br/>
+        <div class="stone-preview">
+          <span class="stone black"></span> 흑<br/>
+        </div>
+        <div class="stone-preview">
+          <span class="stone white"></span> 백
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const SIZE = 15;
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('statusText');
+    const restartBtn = document.getElementById('restartBtn');
+    const undoBtn = document.getElementById('undoBtn');
+
+    let board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+    let currentPlayer = 1;
+    let winner = 0;
+    let history = [];
+
+    function drawBoard() {
+      const w = canvas.width;
+      const h = canvas.height;
+      const padding = 28;
+      const cell = (w - padding * 2) / (SIZE - 1);
+      ctx.clearRect(0, 0, w, h);
+
+      for (let i = 0; i < SIZE; i++) {
+        const pos = padding + i * cell;
+        ctx.strokeStyle = 'rgba(60,35,10,.75)';
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.moveTo(padding, pos);
+        ctx.lineTo(w - padding, pos);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(pos, padding);
+        ctx.lineTo(pos, h - padding);
+        ctx.stroke();
+      }
+
+      const starPoints = [3, 7, 11];
+      for (const y of starPoints) {
+        for (const x of starPoints) {
+          ctx.beginPath();
+          ctx.fillStyle = 'rgba(60,35,10,.9)';
+          ctx.arc(padding + x * cell, padding + y * cell, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (!board[y][x]) continue;
+          drawStone(x, y, board[y][x], padding, cell);
+        }
+      }
+
+      if (history.length) {
+        const last = history[history.length - 1];
+        ctx.beginPath();
+        ctx.strokeStyle = last.player === 1 ? '#fff' : '#111';
+        ctx.lineWidth = 2;
+        ctx.arc(padding + last.x * cell, padding + last.y * cell, 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    function drawStone(x, y, player, padding, cell) {
+      const px = padding + x * cell;
+      const py = padding + y * cell;
+      const r = cell * 0.42;
+      const gradient = ctx.createRadialGradient(px - r * 0.3, py - r * 0.3, r * 0.2, px, py, r);
+      if (player === 1) {
+        gradient.addColorStop(0, '#666');
+        gradient.addColorStop(0.35, '#222');
+        gradient.addColorStop(1, '#000');
+      } else {
+        gradient.addColorStop(0, '#fff');
+        gradient.addColorStop(0.6, '#f4f4f4');
+        gradient.addColorStop(1, '#cfcfcf');
+      }
+      ctx.beginPath();
+      ctx.fillStyle = gradient;
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function updateStatus() {
+      if (winner) {
+        statusText.innerHTML = `<span class="turn">${winner === 1 ? '흑' : '백'}</span> 승리!`; 
+      } else {
+        statusText.innerHTML = `현재 차례: <span class="turn">${currentPlayer === 1 ? '흑' : '백'}</span><br/>수: ${history.length}`;
+      }
+    }
+
+    function getBoardPos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (evt.clientX - rect.left) * scaleX;
+      const y = (evt.clientY - rect.top) * scaleY;
+      const padding = 28;
+      const cell = (canvas.width - padding * 2) / (SIZE - 1);
+      const bx = Math.round((x - padding) / cell);
+      const by = Math.round((y - padding) / cell);
+      if (bx < 0 || bx >= SIZE || by < 0 || by >= SIZE) return null;
+      return { x: bx, y: by };
+    }
+
+    function checkWin(x, y, player) {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      for (const [dx, dy] of dirs) {
+        let count = 1;
+        count += countDir(x, y, dx, dy, player);
+        count += countDir(x, y, -dx, -dy, player);
+        if (count >= 5) return true;
+      }
+      return false;
+    }
+
+    function countDir(x, y, dx, dy, player) {
+      let count = 0;
+      let nx = x + dx;
+      let ny = y + dy;
+      while (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE && board[ny][nx] === player) {
+        count++;
+        nx += dx;
+        ny += dy;
+      }
+      return count;
+    }
+
+    function placeStone(x, y) {
+      if (winner || board[y][x] !== 0) return;
+      board[y][x] = currentPlayer;
+      history.push({ x, y, player: currentPlayer });
+      if (checkWin(x, y, currentPlayer)) {
+        winner = currentPlayer;
+      } else {
+        currentPlayer = currentPlayer === 1 ? 2 : 1;
+      }
+      drawBoard();
+      updateStatus();
+    }
+
+    canvas.addEventListener('click', (evt) => {
+      const pos = getBoardPos(evt);
+      if (!pos) return;
+      placeStone(pos.x, pos.y);
+    });
+
+    restartBtn.addEventListener('click', () => {
+      board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+      currentPlayer = 1;
+      winner = 0;
+      history = [];
+      drawBoard();
+      updateStatus();
+    });
+
+    undoBtn.addEventListener('click', () => {
+      if (!history.length || winner) {
+        if (winner && history.length) {
+          const last = history.pop();
+          board[last.y][last.x] = 0;
+          winner = 0;
+          currentPlayer = last.player;
+        } else {
+          return;
+        }
+      } else {
+        const last = history.pop();
+        board[last.y][last.x] = 0;
+        currentPlayer = last.player;
+      }
+      drawBoard();
+      updateStatus();
+    });
+
+    drawBoard();
+    updateStatus();
+  </script>
+</body>
+</html>
